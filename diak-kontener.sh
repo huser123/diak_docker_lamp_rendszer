@@ -32,10 +32,12 @@ FROM php:8.3-apache
 EOF
 }
 
-# Create docker-compose.yml with modified network and FTP settings
+#!/bin/bash
+
+# ... [previous functions remain the same until create_docker_compose]
+
 create_docker_compose() {
-    cat > docker-compose.yml << 'EOF'
-version: '3.9'
+    cat > docker-compose.yml << EOF
 services:
   traefik:
     image: traefik:v2.6
@@ -64,13 +66,17 @@ EOF
         "Varga Bence"
     )
 
-    local port=2121
+    local ftp_port=2121
+    local passive_port_start=30000
     for user in "${users[@]}"; do
         lastname=$(echo "$user" | cut -d' ' -f1)
         firstname=$(echo "$user" | cut -d' ' -f2)
         username=$(create_username "$lastname" "$firstname")
         password=$(create_password "$lastname")
         domain="${username}.${BASE_DOMAIN}"
+
+        # Calculate passive port range for this user
+        local passive_port_end=$((passive_port_start + 9))
 
         cat >> docker-compose.yml << EOF
   ${username}-web:
@@ -110,10 +116,18 @@ EOF
       FTP_USER_NAME: ${username}
       FTP_USER_PASS: ${password}
       FTP_USER_HOME: /home/ftpusers/${username}
-      FTP_PASSIVE_PORTS: "30000:30009"
+      FTP_PASSIVE_PORTS: "${passive_port_start}:${passive_port_end}"
     ports:
-      - "${port}:21"
-      - "30000-30009:30000-30009"
+      - "${ftp_port}:21"
+EOF
+
+        # Add passive port mappings individually
+        for port in $(seq $passive_port_start $passive_port_end); do
+            echo "      - \"${port}:${port}\"" >> docker-compose.yml
+        done
+
+        # Continue with the rest of the service definition
+        cat >> docker-compose.yml << EOF
     volumes:
       - ./${username}/html:/home/ftpusers/${username}
     networks:
@@ -121,7 +135,8 @@ EOF
     restart: always
 
 EOF
-        ((port++))
+        ((ftp_port++))
+        passive_port_start=$((passive_port_end + 1))
     done
 
     # Add networks configuration with external setting
@@ -133,13 +148,16 @@ networks:
 EOF
 }
 
+# ... [rest of the script remains the same]
+
 # Generate CSV with student data
 create_csv() {
     # Create CSV header
-    echo "Aldomain,FTP_Felhasznalo,FTP_Jelszo,FTP_Port,MySQL_Host,MySQL_Felhasznalo,MySQL_Jelszo,MySQL_Root_Jelszo" > "$CSV_OUTPUT"
+    echo "Aldomain,FTP_Felhasznalo,FTP_Jelszo,FTP_Port,FTP_Passziv_Portok,MySQL_Host,MySQL_Felhasznalo,MySQL_Jelszo,MySQL_Root_Jelszo" > "$CSV_OUTPUT"
 
     # Add data for each user
-    local port=2121
+    local ftp_port=2121
+    local passive_port_start=30000
     declare -a users=(
         "Kálmán Péter"
         "Nagy Ádám"
@@ -156,11 +174,40 @@ create_csv() {
         domain="${username}.${BASE_DOMAIN}"
         mysql_host="${username}-mysql"
 
-        echo "${domain},${username},${password},${port},${mysql_host},${username},${password},${password}" >> "$CSV_OUTPUT"
-        ((port++))
+        local passive_port_end=$((passive_port_start + 9))
+        local passive_ports="${passive_port_start}-${passive_port_end}"
+
+        echo "${domain},${username},${password},${ftp_port},${passive_ports},${mysql_host},${username},${password},${password}" >> "$CSV_OUTPUT"
+
+        ((ftp_port++))
+        passive_port_start=$((passive_port_end + 1))
     done
 
     echo "CSV fájl létrehozva: $CSV_OUTPUT"
+}
+
+# Create test files for each user
+create_test_files() {
+    declare -a users=(
+        "Kálmán Péter"
+        "Nagy Ádám"
+        "Szép Anna"
+        "Tóth Emese"
+        "Varga Bence"
+    )
+
+    for user in "${users[@]}"; do
+        lastname=$(echo "$user" | cut -d' ' -f1)
+        firstname=$(echo "$user" | cut -d' ' -f2)
+        username=$(create_username "$lastname" "$firstname")
+
+        # Create directories
+        mkdir -p "${username}/html"
+        mkdir -p "${username}/mysql"
+
+        # Create index.php and other test files
+        # ... [rest of the function remains the same]
+    done
 }
 
 # Main setup function
@@ -174,7 +221,7 @@ setup_environment() {
     echo "Generating docker-compose.yml..."
     create_docker_compose
 
-    echo "Creating test files..."
+    echo "Creating test files and directories..."
     create_test_files
 
     echo "Generating CSV with student data..."
