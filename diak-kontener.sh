@@ -161,6 +161,9 @@ EOF
       FTP_USER_NAME: ${username}
       FTP_USER_PASS: ${password}
       FTP_USER_HOME: /home/ftpusers/${username}
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
     volumes:
       - ./${username}/html:/home/ftpusers/${username}
     networks:
