@@ -235,6 +235,7 @@ EOF
       context: ./docker
       dockerfile: Dockerfile.php
     container_name: ${username}-web
+    hostname: ${username}-web
     volumes:
       - ./${username}/html:/var/www/html
     labels:
@@ -248,6 +249,7 @@ EOF
   ${username}-mysql:
     image: mariadb:latest
     container_name: ${username}-mysql
+    hostname: ${username}-mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${password}
       MYSQL_DATABASE: ${username}_db
@@ -262,6 +264,7 @@ EOF
   ${username}-ftp:
     image: stilliard/pure-ftpd
     container_name: ${username}-ftp
+    hostname: ${username}-ftp
     environment:
       PUBLICHOST: ${domain}
       FTP_USER_NAME: ${username}
