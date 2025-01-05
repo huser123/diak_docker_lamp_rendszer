@@ -63,6 +63,9 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     xsl \
     opcache
 
+# Telepítsd és engedélyezd a PDO MySQL kiegészítőt
+RUN docker-php-ext-install pdo pdo_mysql
+
 # Install PECL extensions
 RUN pecl install redis \
     && pecl install xdebug \
