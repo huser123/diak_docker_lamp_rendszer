@@ -228,7 +228,7 @@ setup_environment() {
     create_csv
 
     echo "Building and starting Docker containers..."
-    docker-compose up -d
+    docker compose up -d
 
     echo -e "\nKörnyezet beállítása kész!"
     echo -e "\nElérhető URL-ek:"
