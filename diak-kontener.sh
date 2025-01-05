@@ -3,7 +3,8 @@
 # Configuration
 BASE_DOMAIN="teszt.hu"
 NETWORK_NAME="diak-halo"
-CSV_OUTPUT="diak_adatok.csv"
+CSV_OUTPUT="diakok/diak_adatok.csv"
+BASE_DIR="diakok"
 
 # Function to convert accented characters to normal ones
 remove_accents() {
@@ -25,19 +26,169 @@ create_password() {
 
 # Create Dockerfile for PHP with all extensions
 create_php_dockerfile() {
-    mkdir -p docker
-    cat > docker/Dockerfile.php << 'EOF'
+    mkdir -p $BASE_DIR/docker
+    cat > $BASE_DIR/docker/Dockerfile.php << 'EOF'
 FROM php:8.3-apache
-# ... [rest of the Dockerfile remains the same]
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libzip-dev \
+    libxml2-dev \
+    libicu-dev \
+    libonig-dev \
+    libxslt1-dev \
+    unzip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure and install PHP extensions
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+    pdo \
+    pdo_mysql \
+    mysqli \
+    gd \
+    zip \
+    bcmath \
+    calendar \
+    xml \
+    intl \
+    mbstring \
+    gettext \
+    soap \
+    sockets \
+    xsl \
+    opcache
+
+# Install PECL extensions
+RUN pecl install redis \
+    && pecl install xdebug \
+    && docker-php-ext-enable redis xdebug
+
+# Configure Apache
+RUN a2enmod rewrite headers
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Set recommended PHP.ini settings
+RUN { \
+        echo 'upload_max_filesize = 64M'; \
+        echo 'post_max_size = 64M'; \
+        echo 'memory_limit = 256M'; \
+        echo 'max_execution_time = 600'; \
+        echo 'max_input_vars = 3000'; \
+    } > /usr/local/etc/php/conf.d/custom.ini
 EOF
 }
 
-#!/bin/bash
+# Create test files for each user
+create_test_files() {
+    declare -a users=(
+        "Kálmán Péter"
+        "Nagy Ádám"
+        "Szép Anna"
+        "Tóth Emese"
+        "Varga Bence"
+    )
 
-# ... [previous functions remain the same until create_docker_compose]
+    for user in "${users[@]}"; do
+        lastname=$(echo "$user" | cut -d' ' -f1)
+        firstname=$(echo "$user" | cut -d' ' -f2)
+        username=$(create_username "$lastname" "$firstname")
+        password=$(create_password "$lastname")
 
+        # Create directories
+        mkdir -p "$BASE_DIR/${username}/html"
+        mkdir -p "$BASE_DIR/${username}/mysql"
+
+        # Create index.php
+        cat > "$BASE_DIR/${username}/html/index.php" << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Üdvözlünk ${firstname}!</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .menu { margin: 20px 0; }
+        .menu a { margin-right: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Szia ${firstname}!</h1>
+    <p>A webszerver működik!</p>
+    <div class="menu">
+        <a href="phpinfo.php">PHP információk</a>
+        <a href="db.php">Adatbázis kapcsolat teszt</a>
+        <a href="extensions.php">PHP Kiegészítők listája</a>
+    </div>
+</body>
+</html>
+EOF
+
+        # Create phpinfo.php
+        echo "<?php phpinfo(); ?>" > "$BASE_DIR/${username}/html/phpinfo.php"
+
+        # Create extensions.php
+        cat > "$BASE_DIR/${username}/html/extensions.php" << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PHP Kiegészítők</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .extension { margin: 5px 0; }
+        .enabled { color: green; }
+        .disabled { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Telepített PHP Kiegészítők</h1>
+    <?php
+    $extensions = get_loaded_extensions();
+    sort($extensions);
+    foreach($extensions as $extension) {
+        echo "<div class='extension enabled'>✓ " . htmlspecialchars($extension) . "</div>";
+    }
+    ?>
+</body>
+</html>
+EOF
+
+        # Create db.php
+        cat > "$BASE_DIR/${username}/html/db.php" << EOF
+<?php
+\$host = '${username}-mysql';
+\$db   = '${username}_db';
+\$user = '${username}';
+\$pass = '${password}';
+\$charset = 'utf8mb4';
+
+\$dsn = "mysql:host=\$host;dbname=\$db;charset=\$charset";
+try {
+    \$pdo = new PDO(\$dsn, \$user, \$pass);
+    \$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    echo "<div style='color:green; font-family: Arial, sans-serif; margin: 40px;'>";
+    echo "<h1>✓ Adatbázis kapcsolat sikeres!</h1>";
+    echo "<p>Szerver verzió: " . \$pdo->getAttribute(PDO::ATTR_SERVER_VERSION) . "</p>";
+    echo "</div>";
+} catch (PDOException \$e) {
+    echo "<div style='color:red; font-family: Arial, sans-serif; margin: 40px;'>";
+    echo "<h1>✗ Kapcsolódási hiba</h1>";
+    echo "<p>" . htmlspecialchars(\$e->getMessage()) . "</p>";
+    echo "</div>";
+}
+?>
+EOF
+    done
+}
+
+# Create docker-compose.yml
 create_docker_compose() {
-    cat > docker-compose.yml << EOF
+    cat > $BASE_DIR/docker-compose.yml << EOF
 services:
   traefik:
     image: traefik:v2.6
@@ -78,7 +229,7 @@ EOF
         # Calculate passive port range for this user
         local passive_port_end=$((passive_port_start + 9))
 
-        cat >> docker-compose.yml << EOF
+        cat >> $BASE_DIR/docker-compose.yml << EOF
   ${username}-web:
     build:
       context: ./docker
@@ -123,11 +274,11 @@ EOF
 
         # Add passive port mappings individually
         for port in $(seq $passive_port_start $passive_port_end); do
-            echo "      - \"${port}:${port}\"" >> docker-compose.yml
+            echo "      - \"${port}:${port}\"" >> $BASE_DIR/docker-compose.yml
         done
 
         # Continue with the rest of the service definition
-        cat >> docker-compose.yml << EOF
+        cat >> $BASE_DIR/docker-compose.yml << EOF
     volumes:
       - ./${username}/html:/home/ftpusers/${username}
     networks:
@@ -139,16 +290,14 @@ EOF
         passive_port_start=$((passive_port_end + 1))
     done
 
-    # Add networks configuration with external setting
-    cat >> docker-compose.yml << EOF
+    # Add networks configuration
+    cat >> $BASE_DIR/docker-compose.yml << EOF
 networks:
   diak-halo:
     external: true
     name: ${NETWORK_NAME}
 EOF
 }
-
-# ... [rest of the script remains the same]
 
 # Generate CSV with student data
 create_csv() {
@@ -186,32 +335,11 @@ create_csv() {
     echo "CSV fájl létrehozva: $CSV_OUTPUT"
 }
 
-# Create test files for each user
-create_test_files() {
-    declare -a users=(
-        "Kálmán Péter"
-        "Nagy Ádám"
-        "Szép Anna"
-        "Tóth Emese"
-        "Varga Bence"
-    )
-
-    for user in "${users[@]}"; do
-        lastname=$(echo "$user" | cut -d' ' -f1)
-        firstname=$(echo "$user" | cut -d' ' -f2)
-        username=$(create_username "$lastname" "$firstname")
-
-        # Create directories
-        mkdir -p "${username}/html"
-        mkdir -p "${username}/mysql"
-
-        # Create index.php and other test files
-        # ... [rest of the function remains the same]
-    done
-}
-
 # Main setup function
 setup_environment() {
+    echo "Creating base directory..."
+    mkdir -p $BASE_DIR
+
     echo "Creating Docker network..."
     docker network create "$NETWORK_NAME" 2>/dev/null || true
 
@@ -227,8 +355,13 @@ setup_environment() {
     echo "Generating CSV with student data..."
     create_csv
 
+    # Change to the diakok directory before running docker-compose
+    cd $BASE_DIR
+
     echo "Building and starting Docker containers..."
     docker compose up -d
+
+    cd ..
 
     echo -e "\nKörnyezet beállítása kész!"
     echo -e "\nElérhető URL-ek:"
